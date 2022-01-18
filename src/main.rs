@@ -31,11 +31,10 @@ use crate::rabe::{
     }
 };
 
+use rabe::schemes::ac17::Ac17PublicKey;
 use rocket::http::Status;
-use rocket::response::{content, status};
-use serde_json::json;
-use serde::Deserialize;
-use rocket::response::content::Json;
+use rocket::serde::json::{Json, Value, json};
+use rocket::serde::{Serialize, Deserialize};
 
 #[derive(Debug, PartialEq, FromFormField)]
 enum Scheme {
@@ -70,12 +69,21 @@ fn setup(scheme: Vec<Scheme>) -> OkResponse {
         }
     }
 }
-
+#[serde(crate = "rocket::serde")]
 #[derive(Deserialize)]
 struct EncryptBody<'r> {
     pk: &'r str,
-    policy: &'r str,
+    policy: Option<&'r str>,
+    attributes: Option<&'r str>,
     plaintext: &'r str
+}
+
+fn parse_attribtes(attr_string: &str) -> Vec<String> {
+    let mut attributes: Vec<String> = Vec::new();
+    for at in attr_string.split_whitespace() {
+        attributes.push(at.to_string());
+    }
+    attributes
 }
 
 #[post("/encrypt?<scheme>&<lang>", data = "<encrypt_body>")]
@@ -90,19 +98,30 @@ fn encrypt(scheme: Vec<Scheme>, lang: Vec<Lang>, encrypt_body: Json<EncryptBody<
             pl = PolicyLanguage::HumanPolicy
         }
     }
+    let pk: Ac17PublicKey = serde_json::from_str(encrypt_body.pk).unwrap();
+    let plaintext: Vec<u8> = serde_json::from_str(encrypt_body.plaintext).unwrap();
+    
+    let mut ct;
     match scheme[0] {
+        
         Scheme::AC17CP => {
-            let ct = ac17::cp_encrypt(&encrypt_body.pk, &encrypt_body.policy, &buffer, pl);
-            return OkResponse(json!({"ct": ct}).to_string());
+            let policy = serde_json::from_str(encrypt_body.policy.unwrap()).unwrap();
+            let cp_ct = ac17::cp_encrypt(&pk, &policy, &plaintext, pl);
+
+            ct = serde_json::to_string_pretty(&cp_ct).unwrap();
         },
         Scheme::AC17KP => {
+            let attributes: Vec<String> = serde_json::from_str(encrypt_body.attributes.unwrap()).unwrap();
+            let kp_ct = ac17::kp_encrypt(&pk, &attributes, &plaintext).unwrap();
 
+            ct = serde_json::to_string_pretty(&kp_ct).unwrap();
         }
         _ => {
             // this shouldn't happen
             panic!("unknown scheme in encrypt")
         }
     }
+    return OkResponse(json!({"ct": ct}).to_string());
 }
 
 #[launch]
@@ -110,4 +129,21 @@ fn rocket() -> _ {
     rocket::build().mount("/", routes![index])
     .mount("/", routes![setup])
     .mount("/", routes![encrypt])
+}
+
+
+#[cfg(test)]
+mod test {
+    use super::rocket;
+    use rocket::http::Status;
+
+    #[test]
+    fn test_hello() {
+        use rocket::local::blocking::Client;
+
+        let client = Client::tracked(rocket()).unwrap();
+        let response = client.get("/").dispatch();
+        assert_eq!(response.status(), Status::Ok);
+        assert_eq!(response.into_string(), Some("Hello, rapini!".into()));
+    }
 }
