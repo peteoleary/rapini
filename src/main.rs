@@ -15,6 +15,8 @@ extern crate serde_json;
     setup          sets up a new scheme, creates the msk and pk or gp.
 */
 
+use std::collections::HashMap;
+
 use crate::rabe::{
     RabeError,
     schemes::{
@@ -31,10 +33,11 @@ use crate::rabe::{
     }
 };
 
-use rabe::schemes::ac17::Ac17PublicKey;
 use rocket::http::Status;
 use rocket::serde::json::{Json, Value, json};
 use rocket::serde::{Serialize, Deserialize};
+
+use rabe::schemes::ac17::{Ac17MasterKey, Ac17PublicKey};
 
 #[derive(Debug, PartialEq, FromFormField)]
 enum Scheme {
@@ -56,12 +59,15 @@ fn index() -> &'static str {
 struct OkResponse(String);
 
 #[get("/setup?<scheme>")]
-fn setup(scheme: Vec<Scheme>) -> OkResponse {    
+fn setup(scheme: Vec<Scheme>) -> OkResponse {
+    if scheme.len() == 0 {
+        panic!("missing scheme parameter")
+    }
     // TODO: make sure that only one scheme is passed here
     match scheme[0] {
         Scheme::AC17CP | Scheme::AC17KP => {
             let (pk, msk) = ac17::setup();
-            return OkResponse(json!({"msk": msk, "pk": pk}).to_string());
+            return OkResponse(json!({"msk": msk, "pk": pk}).to_string() );
         },
         _ => {
             // this shouldn't happen
@@ -69,6 +75,15 @@ fn setup(scheme: Vec<Scheme>) -> OkResponse {
         }
     }
 }
+
+// TODO: use -> SetupResponse for setup()
+#[derive(Deserialize, Debug)]
+struct SetupResponse {
+    pk: HashMap<String, Value>,
+    msk: HashMap<String, Value>
+}
+
+
 #[serde(crate = "rocket::serde")]
 #[derive(Deserialize)]
 struct EncryptBody<'r> {
@@ -134,16 +149,30 @@ fn rocket() -> _ {
 
 #[cfg(test)]
 mod test {
+    use crate::SetupResponse;
+
     use super::rocket;
     use rocket::http::Status;
+    use rocket::local::blocking::Client;
 
     #[test]
     fn test_hello() {
-        use rocket::local::blocking::Client;
-
         let client = Client::tracked(rocket()).unwrap();
         let response = client.get("/").dispatch();
         assert_eq!(response.status(), Status::Ok);
         assert_eq!(response.into_string(), Some("Hello, rapini!".into()));
+    }
+
+    #[test]
+    fn test_ac17_setup() {
+        let client = Client::tracked(rocket()).unwrap();
+        let response = client.get("/setup?scheme=AC17KP").dispatch();
+        assert_eq!(response.status(), Status::Ok);
+        let response_string = &response.into_string().unwrap();
+        // print!("response_string: {:?}", response_string);
+        let setup_result: SetupResponse = serde_json::from_str(response_string).unwrap();
+        // print!("setup_result: {:?}", setup_result);
+        assert!(setup_result.pk.len() > 0);
+        assert!(setup_result.msk.len() > 0)
     }
 }
