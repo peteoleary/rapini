@@ -85,7 +85,7 @@ struct SetupResponse {
 
 
 #[serde(crate = "rocket::serde")]
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct EncryptBody<'r> {
     pk: &'r str,
     policy: Option<&'r str>,
@@ -149,7 +149,7 @@ fn rocket() -> _ {
 
 #[cfg(test)]
 mod test {
-    use crate::SetupResponse;
+    use crate::{SetupResponse, EncryptBody};
 
     use super::rocket;
     use rocket::http::Status;
@@ -163,16 +163,44 @@ mod test {
         assert_eq!(response.into_string(), Some("Hello, rapini!".into()));
     }
 
-    #[test]
-    fn test_ac17_setup() {
+    fn get_setup_response(scheme: &str) -> SetupResponse {
         let client = Client::tracked(rocket()).unwrap();
-        let response = client.get("/setup?scheme=AC17KP").dispatch();
+        let response = client.get(format!("/setup?scheme={}", scheme)).dispatch();
         assert_eq!(response.status(), Status::Ok);
         let response_string = &response.into_string().unwrap();
         // print!("response_string: {:?}", response_string);
-        let setup_result: SetupResponse = serde_json::from_str(response_string).unwrap();
+        let setup_response: SetupResponse = serde_json::from_str(response_string).unwrap();
         // print!("setup_result: {:?}", setup_result);
-        assert!(setup_result.pk.len() > 0);
-        assert!(setup_result.msk.len() > 0)
+        setup_response
+    }
+
+    #[test]
+    fn test_ac17_setup() {
+        let setup_response: SetupResponse = get_setup_response("AC17KP");
+        assert!(setup_response.pk.len() > 0);
+        assert!(setup_response.msk.len() > 0)
+    }
+
+    #[test]
+    fn test_ac17_kp_encrypt() {
+        let setup_response: SetupResponse = get_setup_response("AC17KP");
+        assert!(setup_response.pk.len() > 0);
+        assert!(setup_response.msk.len() > 0);
+
+        let client = Client::tracked(rocket()).unwrap();
+
+        let body = EncryptBody {
+            pk: &serde_json::to_string(&setup_response.pk).unwrap(),
+            attributes: Some("A B"),
+            policy: None,
+            plaintext: &"dance like no one's watching, encrypt like everyone is!"
+        };
+
+        let body_string = serde_json::to_string(&body).unwrap();
+
+        let response = client.post("/encrypt?scheme=AC17KP&lang=Human")
+            .body(&body_string)
+            .dispatch();
+        assert_eq!(response.status(), Status::Ok);
     }
 }
