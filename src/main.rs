@@ -114,20 +114,20 @@ fn encrypt(scheme: Vec<Scheme>, lang: Vec<Lang>, encrypt_body: Json<EncryptBody>
             let policy = encrypt_body.policy.as_ref().unwrap();
             let cp_ct = ac17::cp_encrypt(&encrypt_body.pk, &policy, &plaintext, pl);
 
-            ct = serde_json::to_string_pretty(&cp_ct).unwrap();
+            ct = json!(&cp_ct).to_string();
         },
         Scheme::AC17KP => {
             let attributes: Vec<String> = parse_attributes(&encrypt_body.attributes.as_ref().unwrap());
             let kp_ct = ac17::kp_encrypt(&encrypt_body.pk, &attributes, &plaintext).unwrap();
 
-            ct = serde_json::to_string_pretty(&kp_ct).unwrap();
+            ct = json!(&kp_ct).to_string();
         }
         _ => {
             // this shouldn't happen
             panic!("unknown scheme in encrypt")
         }
     }
-    return OkResponse(json!({"ct": ct}).to_string());
+    return OkResponse(ct);
 }
 
 #[launch]
@@ -140,13 +140,12 @@ fn rocket() -> _ {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
-
     use crate::{SetupResponse, EncryptBody, parse_attributes};
 
+    use crate::rabe::schemes::ac17;
+
     use super::rocket;
-    use rabe::schemes::ac17::{Ac17PublicKey, self, Ac17MasterKey};
-    use rocket::serde::json::Value;
+    use rabe::schemes::ac17::{Ac17PublicKey, Ac17MasterKey, Ac17KpCiphertext};
     use rocket::http::Status;
     use rocket::local::blocking::Client;
 
@@ -169,14 +168,14 @@ mod test {
         setup_response
     }
 
-    fn isValidMasterKey(mk: Ac17MasterKey) -> bool {
+    fn is_valid_master_key(mk: Ac17MasterKey) -> bool {
         true
     }
 
     #[test]
     fn test_ac17_setup() {
         let setup_response: SetupResponse = get_setup_response("AC17KP");
-        assert!(isValidMasterKey(setup_response.msk));
+        assert!(is_valid_master_key(setup_response.msk));
     }
 
     fn get_encrypt_body(pk: Ac17PublicKey) -> EncryptBody {
@@ -198,7 +197,7 @@ mod test {
 
         let new_body: EncryptBody = serde_json::from_str(&body_string).unwrap();
 
-        // TODO: test public key here
+        assert!(true)
     }
 
     #[test]
@@ -210,14 +209,18 @@ mod test {
         let body = get_encrypt_body(setup_response.pk);
 
         let body_string = serde_json::to_string(&body).unwrap();
-
+        
         let response = client.post("/encrypt?scheme=AC17KP&lang=Human")
             .body(&body_string)
             .dispatch();
         assert_eq!(response.status(), Status::Ok);
 
-        // check the API response cyphertext against what is generated locally
-        // let kp_ct = ac17::kp_encrypt(&body.pk, &body.attributes, &body.plaintext).unwrap();
+        let response_string = &response.into_string().unwrap();
+    
+        let kpencrypt_response: Ac17KpCiphertext = serde_json::from_str(response_string).unwrap();
+        // let kpencrypt_response: Ac17KpCiphertext = serde_json::from_str(response_string).unwrap();
+
+        // TODO: decrypt and check
     }
 
     #[test]
