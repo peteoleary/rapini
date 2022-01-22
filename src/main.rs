@@ -15,18 +15,10 @@ extern crate serde_json;
     setup          sets up a new scheme, creates the msk and pk or gp.
 */
 
-use std::collections::HashMap;
 
 use crate::rabe::{
-    RabeError,
     schemes::{
         ac17,
-        aw11,
-        bdabe,
-        bsw,
-        lsw,
-        mke08,
-        yct14
     },
     utils::{
         policy::pest::PolicyLanguage,
@@ -34,7 +26,7 @@ use crate::rabe::{
 };
 
 use rocket::http::Status;
-use rocket::serde::json::{Json, Value, json};
+use rocket::serde::json::{Json, json};
 use rocket::serde::{Serialize, Deserialize};
 
 use rabe::schemes::ac17::{Ac17MasterKey, Ac17PublicKey};
@@ -77,23 +69,22 @@ fn setup(scheme: Vec<Scheme>) -> OkResponse {
 }
 
 // TODO: use -> SetupResponse for setup()
-#[derive(Deserialize, Debug)]
-struct SetupResponse {
-    pk: HashMap<String, Value>,
-    msk: HashMap<String, Value>
-}
-
-
-#[serde(crate = "rocket::serde")]
 #[derive(Deserialize, Serialize)]
-struct EncryptBody<'r> {
-    pk: &'r str,
-    policy: Option<&'r str>,
-    attributes: Option<&'r str>,
-    plaintext: &'r str
+struct SetupResponse {
+    pk: Ac17PublicKey,
+    msk: Ac17MasterKey
 }
 
-fn parse_attribtes(attr_string: &str) -> Vec<String> {
+
+#[derive(Deserialize, Serialize)]
+struct EncryptBody {
+    pk: Ac17PublicKey,
+    policy: Option<String>,
+    attributes: Option<String>,
+    plaintext: String
+}
+
+fn parse_attributes(attr_string: &String) -> Vec<String> {
     let mut attributes: Vec<String> = Vec::new();
     for at in attr_string.split_whitespace() {
         attributes.push(at.to_string());
@@ -102,9 +93,9 @@ fn parse_attribtes(attr_string: &str) -> Vec<String> {
 }
 
 #[post("/encrypt?<scheme>&<lang>", data = "<encrypt_body>")]
-fn encrypt(scheme: Vec<Scheme>, lang: Vec<Lang>, encrypt_body: Json<EncryptBody<'_>>) -> OkResponse {    
+fn encrypt(scheme: Vec<Scheme>, lang: Vec<Lang>, encrypt_body: Json<EncryptBody>) -> OkResponse {    
     // TODO: make sure that only one scheme and kang is passed here
-    let mut pl;
+    let pl;
     match lang[0] {
         Lang::Json => {
             pl = PolicyLanguage::JsonPolicy
@@ -113,21 +104,21 @@ fn encrypt(scheme: Vec<Scheme>, lang: Vec<Lang>, encrypt_body: Json<EncryptBody<
             pl = PolicyLanguage::HumanPolicy
         }
     }
-    let pk: Ac17PublicKey = serde_json::from_str(encrypt_body.pk).unwrap();
-    let plaintext: Vec<u8> = serde_json::from_str(encrypt_body.plaintext).unwrap();
+    // let pk: Ac17PublicKey = serde_json::from_str(&encrypt_body.pk).unwrap();
+    let plaintext: Vec<u8> = encrypt_body.plaintext.clone().into_bytes();
     
-    let mut ct;
+    let ct;
     match scheme[0] {
         
         Scheme::AC17CP => {
-            let policy = serde_json::from_str(encrypt_body.policy.unwrap()).unwrap();
-            let cp_ct = ac17::cp_encrypt(&pk, &policy, &plaintext, pl);
+            let policy = encrypt_body.policy.as_ref().unwrap();
+            let cp_ct = ac17::cp_encrypt(&encrypt_body.pk, &policy, &plaintext, pl);
 
             ct = serde_json::to_string_pretty(&cp_ct).unwrap();
         },
         Scheme::AC17KP => {
-            let attributes: Vec<String> = serde_json::from_str(encrypt_body.attributes.unwrap()).unwrap();
-            let kp_ct = ac17::kp_encrypt(&pk, &attributes, &plaintext).unwrap();
+            let attributes: Vec<String> = parse_attributes(&encrypt_body.attributes.as_ref().unwrap());
+            let kp_ct = ac17::kp_encrypt(&encrypt_body.pk, &attributes, &plaintext).unwrap();
 
             ct = serde_json::to_string_pretty(&kp_ct).unwrap();
         }
@@ -149,9 +140,13 @@ fn rocket() -> _ {
 
 #[cfg(test)]
 mod test {
-    use crate::{SetupResponse, EncryptBody};
+    use std::collections::HashMap;
+
+    use crate::{SetupResponse, EncryptBody, parse_attributes};
 
     use super::rocket;
+    use rabe::schemes::ac17::{Ac17PublicKey, self, Ac17MasterKey};
+    use rocket::serde::json::Value;
     use rocket::http::Status;
     use rocket::local::blocking::Client;
 
@@ -174,27 +169,45 @@ mod test {
         setup_response
     }
 
+    fn isValidMasterKey(mk: Ac17MasterKey) -> bool {
+        true
+    }
+
     #[test]
     fn test_ac17_setup() {
         let setup_response: SetupResponse = get_setup_response("AC17KP");
-        assert!(setup_response.pk.len() > 0);
-        assert!(setup_response.msk.len() > 0)
+        assert!(isValidMasterKey(setup_response.msk));
+    }
+
+    fn get_encrypt_body(pk: Ac17PublicKey) -> EncryptBody {
+
+        let body = EncryptBody {
+            pk: pk,
+            attributes: Some("A B".to_string()),
+            policy: None,
+            plaintext: "dance like no one's watching, encrypt like everyone is!".to_string()
+        };
+        body
+    }
+
+    #[test]
+    fn test_encrypt_body_serialization() {
+        let setup_response: SetupResponse = get_setup_response("AC17KP");
+
+        let body_string = serde_json::to_string(&get_encrypt_body(setup_response.pk)).unwrap();
+
+        let new_body: EncryptBody = serde_json::from_str(&body_string).unwrap();
+
+        // TODO: test public key here
     }
 
     #[test]
     fn test_ac17_kp_encrypt() {
         let setup_response: SetupResponse = get_setup_response("AC17KP");
-        assert!(setup_response.pk.len() > 0);
-        assert!(setup_response.msk.len() > 0);
 
         let client = Client::tracked(rocket()).unwrap();
 
-        let body = EncryptBody {
-            pk: &serde_json::to_string(&setup_response.pk).unwrap(),
-            attributes: Some("A B"),
-            policy: None,
-            plaintext: &"dance like no one's watching, encrypt like everyone is!"
-        };
+        let body = get_encrypt_body(setup_response.pk);
 
         let body_string = serde_json::to_string(&body).unwrap();
 
@@ -202,5 +215,15 @@ mod test {
             .body(&body_string)
             .dispatch();
         assert_eq!(response.status(), Status::Ok);
+
+        // check the API response cyphertext against what is generated locally
+        // let kp_ct = ac17::kp_encrypt(&body.pk, &body.attributes, &body.plaintext).unwrap();
+    }
+
+    #[test]
+    fn test_attribute_parse() {
+        let attributes: Vec<String> = parse_attributes(&"A B".to_string());
+        assert!(attributes[0].eq("A"));
+        assert!(attributes[1].eq("B"));
     }
 }
