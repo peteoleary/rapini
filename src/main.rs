@@ -81,7 +81,7 @@ struct EncryptBody {
     pk: Ac17PublicKey,
     policy: Option<String>,
     attributes: Option<String>,
-    plaintext: String
+    plain: Vec<u8>
 }
 
 fn parse_attributes(attr_string: &String) -> Vec<String> {
@@ -105,7 +105,7 @@ fn encrypt(scheme: Vec<Scheme>, lang: Vec<Lang>, encrypt_body: Json<EncryptBody>
         }
     }
     // let pk: Ac17PublicKey = serde_json::from_str(&encrypt_body.pk).unwrap();
-    let plaintext: Vec<u8> = encrypt_body.plaintext.clone().into_bytes();
+    let plaintext: Vec<u8> = encrypt_body.plain.clone();
     
     let ct;
     match scheme[0] {
@@ -187,13 +187,13 @@ mod test {
         assert!(is_valid_master_key(setup_response.msk));
     }
 
-    fn get_encrypt_body(pk: Ac17PublicKey) -> EncryptBody {
+    fn get_encrypt_body(plain: Vec<u8>, pk: Ac17PublicKey) -> EncryptBody {
 
         let body = EncryptBody {
             pk: pk,
             attributes: Some("A B".to_string()),
             policy: None,
-            plaintext: PLAINTEXT_SAMPLE.to_string()
+            plain: plain
         };
         body
     }
@@ -202,20 +202,19 @@ mod test {
     fn test_encrypt_body_serialization() {
         let setup_response: SetupResponse = get_setup_response("AC17KP");
 
-        let body_string = serde_json::to_string(&get_encrypt_body(setup_response.pk)).unwrap();
+        let body_string = serde_json::to_string(&get_encrypt_body(PLAINTEXT_SAMPLE.to_string().into_bytes(), setup_response.pk)).unwrap();
 
         let _new_body: EncryptBody = serde_json::from_str(&body_string).unwrap();
 
         assert!(true)
     }
 
-    #[test]
-    fn test_ac17_kp_encrypt() {
+    fn do_test_kp_encrypt(plain: Vec<u8>) {
         let setup_response: SetupResponse = get_setup_response("AC17KP");
 
         let client = Client::tracked(rocket()).unwrap();
 
-        let body = get_encrypt_body(setup_response.pk);
+        let body = get_encrypt_body(plain.clone(), setup_response.pk);
 
         let body_string = serde_json::to_string(&body).unwrap();
 
@@ -231,7 +230,17 @@ mod test {
 
         let sk: Ac17KpSecretKey = kp_keygen(&setup_response.msk, &String::from(r#""A" and "B""#), PolicyLanguage::HumanPolicy).unwrap();
 
-        assert_eq!(kp_decrypt(&sk, &ct).unwrap(), PLAINTEXT_SAMPLE.to_string().into_bytes());
+        assert_eq!(kp_decrypt(&sk, &ct).unwrap(), plain);
+    }
+
+    #[test]
+    fn test_ac17_kp_encrypt() {
+        do_test_kp_encrypt(PLAINTEXT_SAMPLE.to_string().into_bytes());
+    }
+
+    #[test]
+    fn test_ac17_kp_encrypt_small_image() {
+        do_test_kp_encrypt(image::open("src/pixel_1.jpeg").unwrap().into_bytes());
     }
 
     #[test]

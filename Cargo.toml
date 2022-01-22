@@ -9,6 +9,7 @@ edition = "2021"
 rabe = "0.2.6"
 serde = "1.0.118"
 serde_json = "1.0.60"
+image = "0.23.14"
 
 [dependencies.rocket]
 features = ["json", "msgpack", "uuid"]
