@@ -142,12 +142,19 @@ fn rocket() -> _ {
 mod test {
     use crate::{SetupResponse, EncryptBody, parse_attributes};
 
-    use crate::rabe::schemes::ac17;
-
     use super::rocket;
-    use rabe::schemes::ac17::{Ac17PublicKey, Ac17MasterKey, Ac17KpCiphertext};
+    use rabe::schemes::ac17::{Ac17PublicKey, Ac17MasterKey, Ac17KpCiphertext, Ac17KpSecretKey, kp_decrypt, kp_keygen};
     use rocket::http::Status;
     use rocket::local::blocking::Client;
+
+    use crate::rabe::{
+        schemes::{
+            ac17,
+        },
+        utils::{
+            policy::pest::PolicyLanguage,
+        }
+    };
 
     #[test]
     fn test_hello() {
@@ -168,9 +175,11 @@ mod test {
         setup_response
     }
 
-    fn is_valid_master_key(mk: Ac17MasterKey) -> bool {
+    fn is_valid_master_key(_mk: Ac17MasterKey) -> bool {
         true
     }
+
+    static PLAINTEXT_SAMPLE: &str = "dance like no one's watching, encrypt like everyone is!";
 
     #[test]
     fn test_ac17_setup() {
@@ -184,7 +193,7 @@ mod test {
             pk: pk,
             attributes: Some("A B".to_string()),
             policy: None,
-            plaintext: "dance like no one's watching, encrypt like everyone is!".to_string()
+            plaintext: PLAINTEXT_SAMPLE.to_string()
         };
         body
     }
@@ -195,7 +204,7 @@ mod test {
 
         let body_string = serde_json::to_string(&get_encrypt_body(setup_response.pk)).unwrap();
 
-        let new_body: EncryptBody = serde_json::from_str(&body_string).unwrap();
+        let _new_body: EncryptBody = serde_json::from_str(&body_string).unwrap();
 
         assert!(true)
     }
@@ -209,7 +218,7 @@ mod test {
         let body = get_encrypt_body(setup_response.pk);
 
         let body_string = serde_json::to_string(&body).unwrap();
-        
+
         let response = client.post("/encrypt?scheme=AC17KP&lang=Human")
             .body(&body_string)
             .dispatch();
@@ -217,10 +226,12 @@ mod test {
 
         let response_string = &response.into_string().unwrap();
     
-        let kpencrypt_response: Ac17KpCiphertext = serde_json::from_str(response_string).unwrap();
+        let ct: Ac17KpCiphertext = serde_json::from_str(response_string).unwrap();
         // let kpencrypt_response: Ac17KpCiphertext = serde_json::from_str(response_string).unwrap();
 
-        // TODO: decrypt and check
+        let sk: Ac17KpSecretKey = kp_keygen(&setup_response.msk, &String::from(r#""A" and "B""#), PolicyLanguage::HumanPolicy).unwrap();
+
+        assert_eq!(kp_decrypt(&sk, &ct).unwrap(), PLAINTEXT_SAMPLE.to_string().into_bytes());
     }
 
     #[test]
