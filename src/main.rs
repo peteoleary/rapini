@@ -29,7 +29,7 @@ use rocket::http::Status;
 use rocket::serde::json::{Json, json};
 use rocket::serde::{Serialize, Deserialize};
 
-use rabe::schemes::ac17::{Ac17MasterKey, Ac17PublicKey};
+use rabe::schemes::ac17::{Ac17MasterKey, Ac17PublicKey, Ac17CpSecretKey, Ac17KpSecretKey};
 
 #[derive(Debug, PartialEq, FromFormField)]
 enum Scheme {
@@ -92,11 +92,9 @@ fn parse_attributes(attr_string: &String) -> Vec<String> {
     attributes
 }
 
-#[post("/encrypt?<scheme>&<lang>", data = "<encrypt_body>")]
-fn encrypt(scheme: Vec<Scheme>, lang: Vec<Lang>, encrypt_body: Json<EncryptBody>) -> OkResponse {    
-    // TODO: make sure that only one scheme and kang is passed here
+fn get_policy_language(lang: &Lang) -> PolicyLanguage {
     let pl;
-    match lang[0] {
+    match lang {
         Lang::Json => {
             pl = PolicyLanguage::JsonPolicy
         },
@@ -104,7 +102,13 @@ fn encrypt(scheme: Vec<Scheme>, lang: Vec<Lang>, encrypt_body: Json<EncryptBody>
             pl = PolicyLanguage::HumanPolicy
         }
     }
-    // let pk: Ac17PublicKey = serde_json::from_str(&encrypt_body.pk).unwrap();
+    pl
+}
+
+#[post("/encrypt?<scheme>&<lang>", data = "<encrypt_body>")]
+fn encrypt(scheme: Vec<Scheme>, lang: Vec<Lang>, encrypt_body: Json<EncryptBody>) -> OkResponse {    
+    // TODO: make sure that only one scheme and kang is passed here
+    let pl = get_policy_language(&lang[0]);
     let plaintext: Vec<u8> = encrypt_body.plain.clone();
     
     let ct;
@@ -130,17 +134,79 @@ fn encrypt(scheme: Vec<Scheme>, lang: Vec<Lang>, encrypt_body: Json<EncryptBody>
     return OkResponse(ct);
 }
 
+
+#[derive(Deserialize, Serialize)]
+struct KeyGenBody {
+    msk: Ac17MasterKey,
+    policy: Option<String>,
+    attributes: Option<String>,
+    cyphertext: Vec<u8>
+}
+
+#[post("/keygen?<scheme>&<lang>", data = "<keygen_body>")]
+fn keygen(scheme: Vec<Scheme>, lang: Vec<Lang>, keygen_body: Json<KeyGenBody>) -> OkResponse {   
+    let pl = get_policy_language(&lang[0]);
+    let key: String;
+    match scheme[0] {
+        
+        Scheme::AC17CP => {
+            let sk: Ac17CpSecretKey = ac17::cp_keygen(&keygen_body.msk, &vec![]).unwrap();
+            key = json!(sk).to_string();
+        },
+        Scheme::AC17KP => {
+            let policy = keygen_body.policy.as_ref().unwrap();
+            let sk: Ac17KpSecretKey = ac17::kp_keygen(&keygen_body.msk, &policy, pl).unwrap();
+            key = json!(sk).to_string();
+        }
+        _ => {
+            // this shouldn't happen
+            panic!("unknown scheme in keygen")
+        }
+    }
+    return OkResponse(key);
+}
+
+#[derive(Deserialize, Serialize)]
+struct DecryptBody {
+    sk: Ac17CpSecretKey,
+    cyphertext: Vec<u8>
+}
+
+#[post("/decrypt?<scheme>&<lang>", data = "<decrypt_body>")]
+fn decrypt(scheme: Vec<Scheme>, lang: Vec<Lang>, decrypt_body: Json<DecryptBody>) -> OkResponse {   
+    let pl = get_policy_language(&lang[0]);
+    let mut plain: String = "".to_string();
+    match scheme[0] {
+        
+        Scheme::AC17CP => {
+            
+        },
+        Scheme::AC17KP => {
+            
+        }
+        _ => {
+            // this shouldn't happen
+            panic!("unknown scheme in encrypt")
+        }
+    }
+    return OkResponse(plain); 
+}
+
 #[launch]
 fn rocket() -> _ {
     rocket::build().mount("/", routes![index])
     .mount("/", routes![setup])
     .mount("/", routes![encrypt])
+    .mount("/", routes![decrypt])
+    .mount("/", routes![keygen])
 }
 
 
 #[cfg(test)]
 mod test {
     use crate::{SetupResponse, EncryptBody, parse_attributes};
+
+    use std::env;
 
     use super::rocket;
     use rabe::schemes::ac17::{Ac17PublicKey, Ac17MasterKey, Ac17KpCiphertext, Ac17KpSecretKey, kp_decrypt, kp_keygen};
@@ -156,16 +222,21 @@ mod test {
         }
     };
 
+    fn get_rocket_client() -> Client {
+        // TODO: see if we can point this client to a remote address to run test suite against server
+        Client::tracked(rocket()).unwrap()
+    }
+
     #[test]
     fn test_hello() {
-        let client = Client::tracked(rocket()).unwrap();
+        let client = get_rocket_client();
         let response = client.get("/").dispatch();
         assert_eq!(response.status(), Status::Ok);
         assert_eq!(response.into_string(), Some("Hello, rapini!".into()));
     }
 
     fn get_setup_response(scheme: &str) -> SetupResponse {
-        let client = Client::tracked(rocket()).unwrap();
+        let client = get_rocket_client();
         let response = client.get(format!("/setup?scheme={}", scheme)).dispatch();
         assert_eq!(response.status(), Status::Ok);
         let response_string = &response.into_string().unwrap();
@@ -212,7 +283,7 @@ mod test {
     fn do_test_kp_encrypt(plain: Vec<u8>) {
         let setup_response: SetupResponse = get_setup_response("AC17KP");
 
-        let client = Client::tracked(rocket()).unwrap();
+        let client = get_rocket_client();
 
         let body = get_encrypt_body(plain.clone(), setup_response.pk);
 
@@ -248,5 +319,9 @@ mod test {
         let attributes: Vec<String> = parse_attributes(&"A B".to_string());
         assert!(attributes[0].eq("A"));
         assert!(attributes[1].eq("B"));
+    }
+
+    #[test]
+    fn test_ac17_kp_decrypt() {
     }
 }
