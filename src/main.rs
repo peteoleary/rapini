@@ -29,7 +29,8 @@ use rocket::http::Status;
 use rocket::serde::json::{Json, json};
 use rocket::serde::{Serialize, Deserialize};
 
-use rabe::schemes::ac17::{Ac17MasterKey, Ac17PublicKey, Ac17CpSecretKey, Ac17KpSecretKey};
+use rabe::schemes::ac17::{Ac17PublicKey, Ac17MasterKey, Ac17KpCiphertext, Ac17KpSecretKey, Ac17CpCiphertext, Ac17CpSecretKey,
+    kp_decrypt, kp_keygen, cp_decrypt, cp_keygen};
 
 #[derive(Debug, PartialEq, FromFormField)]
 enum Scheme {
@@ -168,28 +169,31 @@ fn keygen(scheme: Vec<Scheme>, lang: Vec<Lang>, keygen_body: Json<KeyGenBody>) -
 
 #[derive(Deserialize, Serialize)]
 struct DecryptBody {
-    sk: Ac17CpSecretKey,
-    cyphertext: Vec<u8>
+    sk: String,
+    ct: String
 }
 
 #[post("/decrypt?<scheme>&<lang>", data = "<decrypt_body>")]
 fn decrypt(scheme: Vec<Scheme>, lang: Vec<Lang>, decrypt_body: Json<DecryptBody>) -> OkResponse {   
     let pl = get_policy_language(&lang[0]);
-    let mut plain: String = "".to_string();
+    let mut plain: Vec<u8>;
     match scheme[0] {
-        
         Scheme::AC17CP => {
-            
+            let sk: Ac17CpSecretKey = serde_json::from_str(&decrypt_body.sk).unwrap();
+            let ct: Ac17CpCiphertext = serde_json::from_str(&decrypt_body.ct).unwrap();
+            plain = cp_decrypt(&sk, &ct).unwrap()
         },
         Scheme::AC17KP => {
-            
+            let sk: Ac17KpSecretKey = serde_json::from_str(&decrypt_body.sk).unwrap();
+            let ct: Ac17KpCiphertext = serde_json::from_str(&decrypt_body.ct).unwrap();
+            plain = kp_decrypt(&sk, &ct).unwrap()
         }
         _ => {
             // this shouldn't happen
-            panic!("unknown scheme in encrypt")
+            panic!("unknown scheme in decrypt")
         }
     }
-    return OkResponse(plain); 
+    return OkResponse(json!({"plain": plain}).to_string() );
 }
 
 #[launch]
@@ -209,7 +213,7 @@ mod test {
     use std::env;
 
     use super::rocket;
-    use rabe::schemes::ac17::{Ac17PublicKey, Ac17MasterKey, Ac17KpCiphertext, Ac17KpSecretKey, kp_decrypt, kp_keygen};
+    use rabe::schemes::ac17::{Ac17PublicKey, Ac17MasterKey, Ac17KpCiphertext, Ac17KpSecretKey, kp_decrypt, kp_keygen, cp_decrypt, cp_keygen};
     use rocket::http::Status;
     use rocket::local::blocking::Client;
 
